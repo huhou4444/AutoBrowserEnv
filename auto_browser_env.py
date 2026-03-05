@@ -1,8 +1,29 @@
-
 from DrissionPage import Chromium
+
 browser = Chromium()
 tab = browser.latest_tab
 tab.get('https://www.baidu.com')
+
+
+def is_null(name):
+    return tab.run_js_loaded(f'{name} === null', as_expr=True)
+
+
+def build_args(num):
+    result = ''
+    for i_ in range(num):
+        result += 'arg' + str(i_) + ','
+    result = result.removesuffix(',')
+    return result
+
+
+def find_function_length(func_name):
+    script = """
+    (function (){
+        return %s.length
+    })()
+    """ % func_name
+    return tab.run_js_loaded(script, as_expr=True)
 
 
 def find_all_constructor():
@@ -17,9 +38,13 @@ def find_all_constructor():
     props.forEach(prop => {
         try {
             const val = window[prop];     
-            if (typeof val !== 'function') return;
+            if (typeof val === 'function') {
                 const protoName = val.prototype && Object.prototype.toString.call(val.prototype);
                 constructors.push(prop);
+            } else if (val === null){
+                constructors.push(prop);
+            }
+                
         } catch (e) {}
     });
     return constructors;
@@ -33,6 +58,7 @@ def find_all_constructor():
         if node_type == 'undefined' or _i == 'EventTarget':
             result.append(_i)
     return result
+
 
 def proto_script(constructor_name):
     script = r"""
@@ -135,30 +161,35 @@ def desc_script(constructor_name):
 
 
 def constructor_script(constructor_name):
-    script = r"""
-        (()=>{
-            let result = ''
-            try {
-                eval(`new %s()`)
-            } catch (e) {
-                if (e.message.includes('Illegal constructor')) {
-                    result += `throw new TypeError("${e.message}")`
-                }
-            }
-            return result
-        })()
-        
-    """ % constructor_name
-    js_r = tab.run_js_loaded(script, as_expr=True)
-    result = f'''
-        {constructor_name} = function {constructor_name}() {{
-            if (new.target){{
-                {js_r}
-            }}
-        }}
-        '''
 
-    return result
+    isnull = is_null(constructor_name)
+    if isnull:
+        return f'{constructor_name} = null'
+    else:
+        script = r"""
+            (()=>{
+                let result = ''
+                try {
+                    eval(`new %s()`)
+                } catch (e) {
+                    if (e.message.includes('Illegal constructor')) {
+                        result += `throw new TypeError("${e.message}")`
+                    }
+                }
+                return result
+            })()
+            
+        """ % constructor_name
+        js_r = tab.run_js_loaded(script, as_expr=True)
+        func_length = find_function_length(constructor_name)
+        result = f'''
+            {constructor_name} = function {constructor_name}({build_args(func_length)}) {{
+                if (new.target){{
+                    {js_r}
+                }}
+            }}
+            '''
+        return result
 
 
 solo_lines = []
@@ -174,13 +205,14 @@ for constructor in all_constructor:
             try:
                 constructor_init = constructor_script(constructor)
                 cells[constructor].append(constructor_init)
-                proto_exist = tab.run_js_loaded(f'typeof {constructor}.prototype', as_expr=True) != 'undefined'
-                if proto_exist:
-                    desc = desc_script(constructor)
-                    if '-' not in desc:
-                        cells[constructor].append(desc)
-                    proto = proto_script(constructor)
-                    cells[constructor].append(proto)
+                if ' = null' not in constructor_init:
+                    proto_exist = tab.run_js_loaded(f'typeof {constructor}.prototype', as_expr=True) != 'undefined'
+                    if proto_exist:
+                        desc = desc_script(constructor)
+                        if '-' not in desc:
+                            cells[constructor].append(desc)
+                        proto = proto_script(constructor)
+                        cells[constructor].append(proto)
 
 
             except Exception as e:
@@ -190,6 +222,7 @@ for constructor in all_constructor:
                 raise e
 
     pass
+
 
 def sort_cells(cells_: dict[str, list]):
     """拓扑排序，确保父原型在子原型之前定义"""
@@ -237,4 +270,3 @@ with open(r'./env.js', 'w', encoding='utf-8') as f:
         for ii in cells[i]:
             f.write(ii + '\n')
 print(f'环境已生成 当前目录下 env.js 文件')
-
