@@ -1,12 +1,7 @@
-# 导入
-import execjs
-from DrissionPage import Chromium
 
-# 连接浏览器
+from DrissionPage import Chromium
 browser = Chromium()
-# 获取标签页对象
 tab = browser.latest_tab
-# 访问网页
 tab.get('https://www.baidu.com')
 
 
@@ -242,3 +237,4 @@ with open(r'./env.js', 'w', encoding='utf-8') as f:
         for ii in cells[i]:
             f.write(ii + '\n')
 print(f'环境已生成 当前目录下 env.js 文件')
+
